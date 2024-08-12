@@ -1,0 +1,197 @@
+`diabetes_dataset <- read.csv("diabetes_dataset.csv", header=TRUE)
+View(diabetes_dataset)
+
+library(dplyr)
+library(class)
+library(forecase)
+diabetes_filtered <- diabetes_dataset %>% filter(smoking_history != "No Info")
+View(diabetes_filtered)
+
+#Likely year data collected in not really relevant to the actual dataset, also probably drop race.other since we need n-1 dummy variables
+#Lets drop other, so we assume that if they dont fit any of the categories, they are other. Collinearity issue otherwise.
+diabetes_filtered <- diabetes_filtered[ -c(1,4,9) ]
+
+
+#make the gender column numeric
+#Remove the location column
+df <- subset(diabetes_filtered, gender != "Other")
+View(df)
+df$gender <- factor(df$gender)
+df_dummy <- model.matrix(~ gender - 1, data = df)
+df_dummy <- as.data.frame(df_dummy)
+df_encoded <- c(df, df_dummy)
+
+
+df_encoded <- df_encoded[ -c(2) ]
+
+df_encoded <- df_encoded %>% select(genderFemale, everything())
+head(df_encoded)
+df_encoded <- df_encoded[-c(2)]
+
+df$smoking_history <- factor(df$smoking_history)
+df_smoking_dummy <- model.matrix(~ smoking_history - 1, data = df)
+df_smoking_dummy <- as.data.frame(df_smoking_dummy)
+colnames(df_smoking_dummy)[colnames(df_smoking_dummy) %in% c("smoking_historycurrent", "smoking_historynot current", "smoking_historyformer", "smoking_historynever")] <- c("smoking_current", "smoking_former", "smoking_not_current", "smoking_never")
+df_encoded <- cbind(df_encoded,df_smoking_dummy)
+df_encoded <- df_encoded[-c(17)]
+df_encoded <- df_encoded[-c(9)]
+
+numeric_vars <- df_encoded[, sapply(df_encoded, is.numeric)]
+numeric_vars_scaled <- scale(numeric_vars)
+
+numeric_vars_scaled <- as.data.frame(numeric_vars_scaled)
+df_final <- cbind(numeric_vars_scaled, df_encoded$diabetes)
+df_final <- df_final[-c(12)]
+colnames(df_final)[colnames(df_final) %in% c("df_encoded$diabetes")] <- c("diabetes")
+
+#WE SHOULD CREATE A KNN VISUALIZATION AND GLM
+
+#KNN model plus visualization
+set.seed(123)
+train_indices <- sample(1:nrow(df_final), size = 0.7 * nrow(df_final))
+train_data <- df_final[train_indices, ]
+test_data <- df_final[-train_indices, ]
+train_x <- train_data %>% select(-diabetes)
+train_y <- train_data$diabetes
+test_x <- test_data %>% select(-diabetes)
+test_y <- test_data$diabetes
+k=5
+knn_pred <- knn(train = train_x, test = test_x, cl = train_y, k = 5)
+knn_model <- knn(train = train_x, test = test_x, cl = train_y, k = k)
+
+confusion_matrix <- table(Predicted = knn_model, Actual = test_y)
+print(confusion_matrix)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", round(accuracy, 2)))
+
+misClassError <- mean(knn_model != test_y)
+print(paste('Accuracy =', 1-misClassError))
+
+#Visualization
+
+
+# Create a grid of values for the decision boundary visualization
+x_min <- min(df_encoded$hbA1c_level)
+x_max <- max(df_encoded$hbA1c_level)
+y_min <- min(df_encoded$blood_glucose_level)
+y_max <- max(df_encoded$blood_glucose_level)
+
+grid <- expand.grid(hbA1c_level = seq(x_min, x_max, length.out = 100),
+                    blood_glucose_level = seq(y_min, y_max, length.out = 100))
+
+# Add other feature columns to the grid with their mean values (or other appropriate imputation)
+grid$genderFemale <- mean(df_encoded$genderFemale)
+grid$age <- mean(df_encoded$age)
+grid$race.AfricanAmerica <- mean(df_encoded$race.AfricanAmerican)
+grid$race.Asian <- mean(df_encoded$race.Asian)
+grid$race.Caucasian <- mean(df_encoded$race.Caucasian)
+grid$race.Hispanic <- mean (df_encoded$race.Hispanic)
+grid$hypertension <- mean(df_encoded$hypertension)
+grid$heart_disease <- mean(df_encoded$heart_disease)
+grid$bmi <- mean(df_encoded$bmi)
+grid$smoking_current <- mean(df_encoded$smoking_current)
+grid$smoking_former <- mean(df_encoded$smoking_former)
+grid$smoking_not_current <- mean(df_encoded$smoking_not_current)
+
+
+# Predict using the KNN model on the grid
+grid <- grid[-c(15)]
+grid_pred <- knn(train = train_x, test = grid, cl = train_y, k = k)
+grid <- cbind(grid, outcome = as.numeric(as.character(grid_pred)))
+
+  # Convert predictions to a data frame for plotting
+grid <- cbind(grid, diabetes = as.numeric(as.character(grid_pred)))
+
+test_data$diabetes <- factor(as.numeric(knn_pred) - 1, levels = c(0, 1))
+
+
+# Plot the decision boundaries and points
+library(ggplot2)
+ggplot(test_data, aes(x = blood_glucose_level, y = hbA1c_level, color = diabetes)) +
+  geom_point(size = 3) +
+  labs(title = "KNN Classification Results",
+       x = "Blood Glucose Level",
+       y = "HbA1c Level") +
+  scale_color_manual(values = c("black", "red")) +  # Assuming binary outcome, e.g., "No" = black, "Yes" = red
+  theme_minimal()
+
+library(ggplot2)
+ggplot(test_data, aes(x = bmi, y = hbA1c_level, color = diabetes)) +
+  geom_point(size = 3) +
+  labs(title = "KNN Classification Results",
+       x = "bmi",
+       y = "HbA1c Level") +
+  scale_color_manual(values = c("black", "red")) +  # Assuming binary outcome, e.g., "No" = black, "Yes" = red
+  theme_minimal()
+
+
+
+#both hbA1c and Blood glucose have correlations with diabetes but not as much correlation with each other
+#Odd visual, maybe you cannot predict if a person is diabetic from looking at hbA1c_levels and blood glucose levels
+
+
+
+#Logistic regression model
+df_final$diabetes <- as.factor(df_final$diabetes)
+diabetes_logit <- glm(diabetes ~ ., data = df_final, family = "binomial") 
+summary(diabetes_logit)
+
+set.seed(111)
+glm_train_x <- train_data %>% select(-diabetes)
+glm_train_y <- train_data$diabetes
+glm_test_x <- test_data %>% select(-diabetes)
+glm_test_y <- test_data$diabetes
+
+glm_model <- cbind(glm_train_x,glm_train_y)
+names(glm_model)[names(glm_model) == 'glm_train_y'] <- 'diabetes'
+glm_model_test <- cbind(glm_test_x, glm_test_y)
+names(glm_model_test)[names(glm_model_test) == 'glm_test_y'] <- 'diabetes'
+
+training_glm <- glm(diabetes ~., data =  glm_model, family = "binomial")
+summary(training_glm)
+#from this we can see that the most important factors in predicting the log odds of a patient being diabetic is from gender, age, 
+#hypertension, heart disease, bmi, hba1c level, blood glucose level, and if they are a smoker.
+#For every one unit increase in a variable, increase the log odds of being diabetic 
+
+df_final$predicted_prob <- predict(diabetes_logit, newdata = df_final,type = "response")
+df_final$predicted_diabetes <- ifelse(df_final$predicted_prob > 0.5, 1, 0)
+confusion_matrix <- table(df_final$diabetes, df_final$predicted_diabetes)
+print(confusion_matrix)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", round(accuracy, 2)))
+library(pROC)
+roc_curve <- roc(df_final$diabetes, df_final$predicted_prob)
+plot(roc_curve, col = "blue")
+
+#ROC (receiver operating characteristic) curve shows the classifier is high performing
+
+glm_train_x$diabetes <- glm_train_y
+diabetes_lm_null <- lm(diabetes~1, data = glm_train_x)
+diabetes_lm_step <- step(diabetes_lm_null, scope=list(lower=diabetes_lm_null, upper=glm_train_x), direction = "forward")
+
+
+glm_train_x$diabetes <- as.factor(glm_train_x$diabetes)
+
+
+diabetes_backstep <- step(glm_train_x, direction = "backward")
+str(diabetes_backstep)
+
+diabetes_backstep <- step(glm_model_test, direction = "backward")
+glm_df_final <- glm(diabetes~., data = df_encoded, family = binomial)
+backward_model <- step(glm_df_final, direction = "backward")
+summary(backward_model)
+
+train_data <- df_encoded[train_indices, ]
+test_data <- df_encoded[-train_indices, ]
+train_x <- train_data %>% select(-diabetes)
+train_y <- train_data$diabetes
+test_x <- test_data %>% select(-diabetes)
+test_y <- test_data$diabetes
+
+test_dat
+predictions <- predict(backward_model, test_data)
+head(predictions)
+accuracy(predictions, test_data$diabetes)
+#error somewhere in here.
+
+
