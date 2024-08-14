@@ -1,4 +1,6 @@
+# https://www.kaggle.com/datasets/iammustafatz/diabetes-prediction-dataset Link to data set
 `diabetes_dataset <- read.csv("diabetes_dataset.csv", header=TRUE)
+
 View(diabetes_dataset)
 
 library(dplyr)
